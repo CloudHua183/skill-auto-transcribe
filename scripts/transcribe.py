@@ -29,13 +29,104 @@ def fmt_ts(s: float) -> str:
     sec = int(s); ms = int((s - sec) * 1000)
     return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
 
+# ── 助詞 / 連接詞列表（不在這些詞後面斷行）───────────────────────
+PARTICLES = {"的","了","在","和","與","及","為","於","是","有","我","你","他","這","那","過","來","去","說","看","從","但","而","卻","還","也","都","又","只","要","會","可","讓","被","使","曾","已","把","跟","用","以","或","如","若","因","所","故","個","些","本","此","其","並","且","於是","所以","因為","但是","然而","雖然"}
+
+# ── SRT 字幕格式化（每行最多15字、助詞不斷行、標點優先斷行）─────────
+def format_srt_text(text: str) -> str:
+    """將長文字斷行為 SRT 顯示行，遵守三規則："""
+    # 1. 先以全形標點分句
+    sentences = []
+    for chunk in text.split("。"):
+        if chunk.strip():
+            sentences.append(chunk.strip() + ("。" if chunk else ""))
+    for chunk in text.split("，"):
+        if chunk.strip() and "。" not in chunk:
+            sentences.append(chunk.strip() + "，")
+    for chunk in text.split("、"):
+        if chunk.strip():
+            sentences.append(chunk.strip() + "、")
+    for chunk in text.split("；"):
+        if chunk.strip():
+            sentences.append(chunk.strip() + "；")
+    for chunk in text.split("："):
+        if chunk.strip():
+            sentences.append(chunk.strip() + "：")
+    for chunk in text.split("！"):
+        if chunk.strip():
+            sentences.append(chunk.strip() + "！")
+    for chunk in text.split("？"):
+        if chunk.strip():
+            sentences.append(chunk.strip() + "？")
+    # 去除空白字元
+    raw = list(text)
+    result = []
+    current_line = ""
+    current_len = 0
+
+    for ch in text:
+        # 遇到標點：優先在標點處截斷
+        if ch in "。，、；：！？":
+            current_line += ch
+            current_len += 1
+            result.append(current_line)
+            current_line = ""
+            current_len = 0
+        elif current_len >= 15:
+            # 已經滿15字，找最後一個助詞位置截斷
+            line_to_check = current_line.rstrip()
+            cut_pos = -1
+            # 由後往前找助詞
+            for i in range(len(line_to_check) - 1, -1, -1):
+                w = line_to_check[i:]
+                if w in PARTICLES or line_to_check[i] in "的的你了在和與及為於是有我你他這那過來去說看從但而卻還也都又把跟用以或如若因所故個些本此其並且於是所以因為但是然而雖然":
+                    cut_pos = i
+                    break
+            if cut_pos > 0:
+                result.append(line_to_check[:cut_pos])
+                remainder = line_to_check[cut_pos:]
+                current_line = remainder
+                current_len = len(remainder)
+            else:
+                result.append(line_to_check)
+                current_line = ""
+                current_len = 0
+        else:
+            current_line += ch
+            current_len += 1
+
+    if current_line.strip():
+        result.append(current_line)
+
+    # 合併：每個 subtitle block 最多 2 行
+    lines = [l for l in result if l.strip()]
+    if len(lines) > 2:
+        # 超出時合併成長句再截斷
+        merged = "".join(lines)
+        lines = []
+        i = 0
+        while i < len(merged):
+            end = min(i + 15, len(merged))
+            if end < len(merged) and merged[end-1] not in "。，、；：！？":
+                # 嘗試往前找標點
+                for bp in range(end-1, i-1, -1):
+                    if merged[bp] in "。，、；：！？":
+                        end = bp + 1
+                        break
+            lines.append(merged[i:end])
+            i = end
+        lines = lines[:2]  # 強迫最多2行
+
+    return "\n".join(lines)
+
 # ── 寫入 SRT ───────────────────────────────────────────────────────
 def write_srt(segments, output_path):
     lines = []
     for i, seg in enumerate(segments, 1):
         start = fmt_ts(seg.start)
         end = fmt_ts(seg.end)
-        text = seg.text.strip()
+        raw_text = seg.text.strip()
+        text = format_srt_text(raw_text)
         lines.append(f"{i}\n{start} --> {end}\n{text}\n")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
